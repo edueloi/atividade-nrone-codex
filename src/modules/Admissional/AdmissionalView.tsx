@@ -1,25 +1,26 @@
-import React, { useState, useEffect } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
-import { 
-  Plus, Calendar, Search, Filter, Download, 
-  FileText, CheckCircle2, AlertTriangle, XCircle, 
-  ChevronRight, MoreVertical, Trash2, Save, X, 
-  ArrowRight, ArrowLeft, ShieldCheck, ClipboardList,
-  BarChart3, PieChart as PieChartIcon, TrendingUp, Info,
-  Settings, Copy, Eye, Paperclip, Camera
-} from 'lucide-react';
-import { 
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, 
-  ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line, Legend
-} from 'recharts';
-import { StatCard } from '../../components/StatCard.js';
-import { 
-  fetchAdmissionTemplates, 
-  createAdmissionTemplate, 
-  fetchAdmissionEvaluations, 
-  createAdmissionEvaluation, 
+import React, { useEffect, useMemo, useState } from 'react';
+import { AnimatePresence, motion } from 'motion/react';
+import { AlertTriangle, CheckCircle2, Download, Eye, FileText, Filter, MoreVertical, Plus, Search, Settings, ShieldCheck, Upload, X, XCircle } from 'lucide-react';
+import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import {
+  createAdmissionEvaluation,
+  createAdmissionTemplate,
+  deleteAdmissionEvaluation,
+  disableAdmissionTemplate,
+  duplicateAdmissionTemplate,
+  fetchAdmissionAttachments,
+  fetchAdmissionEvaluations,
+  fetchAdmissionReportHistory,
+  fetchAdmissionReportJob,
   fetchAdmissionSummary,
-  fetchUnits
+  fetchAdmissionTemplates,
+  fetchPublishedAdmissionTemplate,
+  fetchUnits,
+  generateAdmissionReport,
+  publishAdmissionTemplate,
+  updateAdmissionEvaluation,
+  updateAdmissionTemplate,
+  uploadAdmissionAttachment,
 } from '../../services/api.js';
 
 interface AdmissionalViewProps {
@@ -27,621 +28,261 @@ interface AdmissionalViewProps {
   user: { id: string; name: string; role: string };
 }
 
-const COLORS = ['#10b981', '#f59e0b', '#ef4444', '#6366f1'];
-
 export const AdmissionalView: React.FC<AdmissionalViewProps> = ({ tenant, user }) => {
+  const isAdmin = user.role === 'admin_atividade';
   const [activeSubTab, setActiveSubTab] = useState<'summary' | 'list' | 'templates' | 'reports'>('summary');
+  const [summary, setSummary] = useState<any>(null);
   const [evaluations, setEvaluations] = useState<any[]>([]);
   const [templates, setTemplates] = useState<any[]>([]);
-  const [summary, setSummary] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
-  const [showNewModal, setShowNewModal] = useState(false);
   const [units, setUnits] = useState<any[]>([]);
-  
-  // Modal State
-  const [modalStep, setModalStep] = useState(1);
-  const [newEval, setNewEval] = useState({
-    unit_id: '',
-    sector_id: '',
-    role_name: '',
-    template_id: '',
-    evaluation_date: new Date().toISOString().split('T')[0],
-    result: 'RECOMMENDED' as 'RECOMMENDED' | 'RESTRICTED' | 'NOT_RECOMMENDED',
-    reasons: [] as string[],
-    scores: {} as Record<string, any>,
-    notes: ''
+  const [reportHistory, setReportHistory] = useState<any[]>([]);
+
+  const [filters, setFilters] = useState({ search: '', from: '', to: '', result: '', reason: '', role: '' });
+  const [showFilters, setShowFilters] = useState(false);
+  const [showEvalModal, setShowEvalModal] = useState(false);
+  const [showTemplateModal, setShowTemplateModal] = useState(false);
+  const [showReportModal, setShowReportModal] = useState(false);
+  const [reportJobStatus, setReportJobStatus] = useState<any>(null);
+
+  const [selectedEvaluation, setSelectedEvaluation] = useState<any | null>(null);
+  const [selectedAttachments, setSelectedAttachments] = useState<any[]>([]);
+  const [editingEvaluation, setEditingEvaluation] = useState<any | null>(null);
+
+  const [editingTemplate, setEditingTemplate] = useState<any | null>(null);
+  const [templateForm, setTemplateForm] = useState<any>({
+    role_name: 'Operador de Empilhadeira',
+    fields_json: [
+      { id: 'flexibility', label: 'Flexibilidade', type: 'number', required: true, group: 'Avaliação física' },
+      { id: 'strength', label: 'Força', type: 'number', required: true, group: 'Avaliação física' },
+      { id: 'pain', label: 'Dor lombar', type: 'checkbox', required: false, group: 'Dor' },
+    ],
+    rules_json: { note: 'Se flexibilidade < 4 sugerir restrição.' },
+    reasons_json: ['Dor lombar', 'Lesão ombro', 'Limitação mobilidade'],
   });
 
-  const isAdmin = user.role === 'admin_atividade';
+  const [evalStep, setEvalStep] = useState(1);
+  const [newEval, setNewEval] = useState<any>({
+    unit_id: 'toyota-sorocaba',
+    sector_id: 'toyota-montagem',
+    role_name: 'Operador de Empilhadeira',
+    template_id: '',
+    evaluation_date: new Date().toISOString().slice(0, 10),
+    result: 'RECOMMENDED',
+    reasons: [],
+    answers: {},
+    notes: '',
+  });
 
-  useEffect(() => {
-    loadData();
-    loadUnits();
-  }, [tenant.id, activeSubTab]);
-
-  const loadUnits = async () => {
-    const data = await fetchUnits(tenant.id);
-    setUnits(data);
-  };
+  const [reportConfig, setReportConfig] = useState({ type: 'EXEC', from: '', to: '', includeCharts: true, hideSensitive: false });
 
   const loadData = async () => {
-    setLoading(true);
-    try {
-      if (activeSubTab === 'summary') {
-        const data = await fetchAdmissionSummary(tenant.id);
-        setSummary(data);
-      } else if (activeSubTab === 'list') {
-        const data = await fetchAdmissionEvaluations({ tenantId: tenant.id });
-        setEvaluations(data);
-      } else if (activeSubTab === 'templates') {
-        const data = await fetchAdmissionTemplates(tenant.id);
-        setTemplates(data);
-      }
-    } catch (error) {
-      console.error('Error loading admissional data:', error);
-    } finally {
-      setLoading(false);
-    }
+    if (activeSubTab === 'summary') setSummary(await fetchAdmissionSummary(tenant.id));
+    if (activeSubTab === 'list') setEvaluations(await fetchAdmissionEvaluations({ tenantId: tenant.id, ...filters }));
+    if (activeSubTab === 'templates') setTemplates(await fetchAdmissionTemplates(tenant.id));
+    if (activeSubTab === 'reports') setReportHistory(await fetchAdmissionReportHistory(tenant.id));
   };
 
-  const handleSave = async () => {
-    const id = `eval-${Date.now()}`;
-    await createAdmissionEvaluation({
-      ...newEval,
-      id,
-      tenant_id: tenant.id,
-      created_by: user.id,
-      reasons_json: newEval.reasons,
-      scores_json: newEval.scores
+  useEffect(() => { fetchUnits(tenant.id).then(setUnits); }, [tenant.id]);
+  useEffect(() => { loadData(); }, [tenant.id, activeSubTab]);
+
+  const filteredEvaluations = useMemo(() => {
+    return evaluations.filter((e) => {
+      if (filters.search && !`${e.role_name} ${e.sector_name}`.toLowerCase().includes(filters.search.toLowerCase())) return false;
+      return true;
     });
-    setShowNewModal(false);
-    setModalStep(1);
+  }, [evaluations, filters.search]);
+
+  const goToListWithFilters = (next: any) => {
+    setFilters((prev) => ({ ...prev, ...next }));
+    setActiveSubTab('list');
+    setTimeout(() => loadData(), 0);
+  };
+
+  const onRoleChange = async (role: string) => {
+    const tpl = await fetchPublishedAdmissionTemplate(tenant.id, role);
+    setNewEval((prev: any) => ({ ...prev, role_name: role, template_id: tpl?.id || '', answers: {} }));
+  };
+
+  const saveEvaluation = async () => {
+    if ((newEval.result === 'RESTRICTED' || newEval.result === 'NOT_RECOMMENDED') && newEval.reasons.length === 0) return;
+
+    const payload = {
+      id: editingEvaluation?.id || `eval-${Date.now()}`,
+      tenant_id: tenant.id,
+      unit_id: newEval.unit_id,
+      sector_id: newEval.sector_id,
+      role_name: newEval.role_name,
+      template_id: newEval.template_id,
+      evaluation_date: newEval.evaluation_date,
+      result: newEval.result,
+      reasons_json: newEval.reasons,
+      answers_json: newEval.answers,
+      notes: newEval.notes,
+      created_by: user.id,
+    };
+
+    if (editingEvaluation) {
+      await updateAdmissionEvaluation(editingEvaluation.id, payload);
+    } else {
+      await createAdmissionEvaluation(payload);
+    }
+
+    setShowEvalModal(false);
+    setEditingEvaluation(null);
+    setEvalStep(1);
+    if (activeSubTab !== 'list') setActiveSubTab('list');
     loadData();
   };
 
-  const getResultBadge = (result: string) => {
-    switch (result) {
-      case 'RECOMMENDED':
-        return <span className="px-2 py-1 bg-emerald-50 text-emerald-600 rounded-lg text-[10px] font-bold uppercase">Recomendado</span>;
-      case 'RESTRICTED':
-        return <span className="px-2 py-1 bg-amber-50 text-amber-600 rounded-lg text-[10px] font-bold uppercase">Restrição</span>;
-      case 'NOT_RECOMMENDED':
-        return <span className="px-2 py-1 bg-rose-50 text-rose-600 rounded-lg text-[10px] font-bold uppercase">Não Recomendado</span>;
-      default:
-        return null;
-    }
+  const openEvaluationDetail = async (item: any) => {
+    setSelectedEvaluation(item);
+    setSelectedAttachments(await fetchAdmissionAttachments(item.id));
   };
 
+  const saveTemplate = async () => {
+    if (editingTemplate) {
+      await updateAdmissionTemplate(editingTemplate.id, templateForm);
+    } else {
+      await createAdmissionTemplate({ id: `tpl-${Date.now()}`, tenant_id: tenant.id, created_by: user.id, ...templateForm });
+    }
+    setShowTemplateModal(false);
+    setEditingTemplate(null);
+    loadData();
+  };
+
+  const generateReport = async () => {
+    setReportJobStatus({ status: 'RUNNING' });
+    const job = await generateAdmissionReport({ tenantId: tenant.id, type: reportConfig.type, params: reportConfig, createdBy: user.id });
+    const result = await fetchAdmissionReportJob(job.jobId);
+    setReportJobStatus(result);
+    setShowReportModal(false);
+    setActiveSubTab('reports');
+    loadData();
+  };
+
+  const activeTemplate = templates.find((t) => t.id === newEval.template_id);
+
   return (
-    <div className="space-y-8">
-      {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold text-zinc-900">Admissional</h1>
-          <p className="text-zinc-500">Avaliação cinesiofuncional e aptidão física.</p>
+          <p className="text-zinc-500">Template publicado → Avaliação criada → Resultado/Regras → Dash/Relatório.</p>
         </div>
-        <div className="flex items-center gap-2 bg-white p-1 rounded-2xl border border-zinc-200 shadow-sm">
-          <button 
-            onClick={() => setActiveSubTab('summary')}
-            className={`px-4 py-2 rounded-xl text-sm font-bold transition-all ${activeSubTab === 'summary' ? 'bg-emerald-600 text-white shadow-md' : 'text-zinc-500 hover:bg-zinc-50'}`}
-          >
-            Resumo
-          </button>
-          <button 
-            onClick={() => setActiveSubTab('list')}
-            className={`px-4 py-2 rounded-xl text-sm font-bold transition-all ${activeSubTab === 'list' ? 'bg-emerald-600 text-white shadow-md' : 'text-zinc-500 hover:bg-zinc-50'}`}
-          >
-            Avaliações
-          </button>
-          <button 
-            onClick={() => setActiveSubTab('templates')}
-            className={`px-4 py-2 rounded-xl text-sm font-bold transition-all ${activeSubTab === 'templates' ? 'bg-emerald-600 text-white shadow-md' : 'text-zinc-500 hover:bg-zinc-50'}`}
-          >
-            Templates
-          </button>
-          <button 
-            onClick={() => setActiveSubTab('reports')}
-            className={`px-4 py-2 rounded-xl text-sm font-bold transition-all ${activeSubTab === 'reports' ? 'bg-emerald-600 text-white shadow-md' : 'text-zinc-500 hover:bg-zinc-50'}`}
-          >
-            Relatórios
-          </button>
+        <div className="flex items-center gap-2 bg-white p-1 border rounded-2xl">
+          {[
+            ['summary', 'Resumo'],
+            ['list', 'Avaliações'],
+            ['templates', 'Templates'],
+            ['reports', 'Relatórios'],
+          ].map(([k, l]) => (
+            <button key={k} onClick={() => setActiveSubTab(k as any)} className={`px-4 py-2 rounded-xl text-sm font-bold ${activeSubTab === k ? 'bg-emerald-600 text-white' : 'text-zinc-500'}`}>{l}</button>
+          ))}
         </div>
       </div>
 
-      {/* Content */}
-      <AnimatePresence mode="wait">
-        {activeSubTab === 'summary' && summary && (
-          <motion.div 
-            key="summary"
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -10 }}
-            className="space-y-6"
-          >
-            {/* KPI Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-              <StatCard label="Total Avaliações" value={summary.totalEvaluations} trend="+12" icon={<ClipboardList className="text-blue-600" />} color="blue" />
-              <StatCard label="% Recomendados" value={`${summary.recommendedRate}%`} trend="+2%" icon={<CheckCircle2 className="text-emerald-600" />} color="emerald" />
-              <StatCard label="% Com Restrição" value={`${summary.restrictedRate}%`} trend="-1%" icon={<AlertTriangle className="text-amber-600" />} color="amber" />
-              <StatCard label="% Não Recomendados" value={`${summary.notRecommendedRate}%`} trend="-1%" icon={<XCircle className="text-rose-600" />} color="rose" negative />
-            </div>
+      {activeSubTab === 'summary' && summary && (
+        <div className="space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <button onClick={() => goToListWithFilters({ result: 'RECOMMENDED' })} className="bg-white border rounded-2xl p-5 text-left"><div className="text-xs uppercase text-zinc-500">Recomendados</div><div className="text-3xl font-bold text-emerald-600">{summary.recommendedRate}%</div></button>
+            <button onClick={() => goToListWithFilters({ result: 'RESTRICTED' })} className="bg-white border rounded-2xl p-5 text-left"><div className="text-xs uppercase text-zinc-500">Restrição</div><div className="text-3xl font-bold text-amber-600">{summary.restrictedRate}%</div></button>
+            <button onClick={() => goToListWithFilters({ result: 'NOT_RECOMMENDED' })} className="bg-white border rounded-2xl p-5 text-left"><div className="text-xs uppercase text-zinc-500">Não recomendado</div><div className="text-3xl font-bold text-rose-600">{summary.notRecommendedRate}%</div></button>
+          </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              {/* Result Distribution */}
-              <div className="bg-white p-6 rounded-3xl border border-zinc-200 shadow-sm">
-                <h3 className="text-sm font-bold uppercase tracking-widest text-zinc-400 mb-6">Aptidão Geral</h3>
-                <div className="h-[240px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie
-                        data={summary.resultDistribution}
-                        cx="50%"
-                        cy="50%"
-                        innerRadius={60}
-                        outerRadius={80}
-                        paddingAngle={5}
-                        dataKey="value"
-                      >
-                        {summary.resultDistribution.map((entry: any, index: number) => (
-                          <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                        ))}
-                      </Pie>
-                      <Tooltip />
-                      <Legend verticalAlign="bottom" height={36} />
-                    </PieChart>
-                  </ResponsiveContainer>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="bg-white border rounded-2xl p-6">
+              <h3 className="font-bold mb-3">Tendência de não recomendados</h3>
+              <div className="h-64">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={summary.monthlyTrend} onClick={(state: any) => state?.activePayload && goToListWithFilters({ from: `2026-${String(state.activePayload[0].payload.month).padStart(2, '0')}-01` })}>
+                    <XAxis dataKey="month" /><YAxis /><Tooltip /><Line dataKey="rate" stroke="#ef4444" />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+            <div className="space-y-4">
+              <div className="bg-white border rounded-2xl p-5">
+                <h4 className="font-bold mb-3">Motivos de restrição/veto</h4>
+                <div className="space-y-2">{summary.frequentReasons.map((r: any) => <button key={r.reason} onClick={() => goToListWithFilters({ reason: r.reason })} className="w-full flex justify-between bg-zinc-50 rounded-xl px-3 py-2"><span>{r.reason}</span><span>{r.count}</span></button>)}</div>
+              </div>
+              <div className="bg-white border rounded-2xl p-5">
+                <h4 className="font-bold mb-3">Funções críticas (vetos)</h4>
+                <div className="space-y-2">{summary.topCriticalRoles.map((r: any) => <button key={r.role} onClick={() => goToListWithFilters({ role: r.role, result: 'NOT_RECOMMENDED' })} className="w-full flex justify-between bg-rose-50 rounded-xl px-3 py-2"><span>{r.role}</span><span>{r.count}</span></button>)}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeSubTab === 'list' && (
+        <div className="space-y-4">
+          <div className="flex flex-wrap gap-3 items-center">
+            <div className="relative flex-1 min-w-[240px]"><Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" /><input className="w-full border rounded-xl py-2 pl-9 pr-3" placeholder="Buscar por função, setor..." value={filters.search} onChange={(e) => setFilters({ ...filters, search: e.target.value })} /></div>
+            <button onClick={() => setShowFilters(true)} className="px-4 py-2 border rounded-xl font-bold text-sm flex items-center gap-2"><Filter className="w-4 h-4" />Filtros</button>
+            <button onClick={() => setShowReportModal(true)} className="px-4 py-2 border rounded-xl font-bold text-sm flex items-center gap-2"><Download className="w-4 h-4" />Exportar</button>
+            <button onClick={() => { setEditingEvaluation(null); setShowEvalModal(true); }} className="px-4 py-2 bg-emerald-600 text-white rounded-xl font-bold text-sm flex items-center gap-2"><Plus className="w-4 h-4" />Nova Avaliação</button>
+          </div>
+
+          <div className="bg-white border rounded-2xl overflow-hidden">
+            <table className="w-full text-left">
+              <thead className="bg-zinc-50 text-xs uppercase text-zinc-500"><tr><th className="px-4 py-3">Data</th><th>Função</th><th>Unidade/Setor</th><th>Resultado</th><th>Motivo</th><th>Template</th><th>Anexo</th><th>Ações</th></tr></thead>
+              <tbody>{filteredEvaluations.map((e) => (
+                <tr key={e.id} className="border-t hover:bg-zinc-50 cursor-pointer" onClick={() => openEvaluationDetail(e)}>
+                  <td className="px-4 py-3">{e.evaluation_date}</td>
+                  <td>{e.role_name}</td><td>{e.unit_name} / {e.sector_name}</td>
+                  <td>{e.result === 'RECOMMENDED' ? <span className="text-emerald-600 font-bold">Recomendado</span> : e.result === 'RESTRICTED' ? <span className="text-amber-600 font-bold">Restrição</span> : <span className="text-rose-600 font-bold">Não recomendado</span>}</td>
+                  <td>{e.reasons_json?.[0] || '-'}</td><td>v{e.template_version || '-'}</td><td>{e.attachment_count ? '📎' : '-'}</td>
+                  <td><button onClick={(ev) => { ev.stopPropagation(); setSelectedEvaluation(e); }} className="p-1"><MoreVertical className="w-4 h-4" /></button></td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {activeSubTab === 'templates' && (
+        <div className="space-y-4">
+          <div className="flex justify-between"><h2 className="font-bold text-xl">Templates</h2><button onClick={() => { setEditingTemplate(null); setShowTemplateModal(true); }} className="px-4 py-2 bg-zinc-900 text-white rounded-xl text-sm font-bold flex items-center gap-2"><Plus className="w-4 h-4" />Novo Template</button></div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {templates.map((t) => (
+              <div key={t.id} className="bg-white border rounded-2xl p-5 space-y-3">
+                <div className="flex justify-between"><ShieldCheck className="w-5 h-5 text-zinc-400" /><span className="text-xs uppercase font-bold">{t.status}</span></div>
+                <div className="font-bold">{t.role_name}</div><div className="text-xs text-zinc-500">Versão {t.version} • {t.fields_json.length} campos</div>
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <button onClick={() => { setEditingTemplate(t); setTemplateForm(t); setShowTemplateModal(true); }} className="border rounded-lg py-2">Editar</button>
+                  <button onClick={async () => { await duplicateAdmissionTemplate(t.id); loadData(); }} className="border rounded-lg py-2">Duplicar</button>
+                  <button onClick={async () => { await publishAdmissionTemplate(t.id); loadData(); }} className="border rounded-lg py-2">Publicar</button>
+                  <button onClick={async () => { await disableAdmissionTemplate(t.id); loadData(); }} className="border rounded-lg py-2 text-rose-600">Desativar</button>
                 </div>
               </div>
+            ))}
+          </div>
+        </div>
+      )}
 
-              {/* Monthly Trend */}
-              <div className="lg:col-span-2 bg-white p-6 rounded-3xl border border-zinc-200 shadow-sm">
-                <h3 className="text-sm font-bold uppercase tracking-widest text-zinc-400 mb-6">Tendência de Não Recomendados (%)</h3>
-                <div className="h-[240px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={summary.monthlyTrend}>
-                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f4f4f5" />
-                      <XAxis dataKey="month" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#a1a1aa' }} />
-                      <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#a1a1aa' }} />
-                      <Tooltip />
-                      <Line type="monotone" dataKey="rate" stroke="#ef4444" strokeWidth={3} dot={{ r: 4, fill: '#ef4444' }} />
-                    </LineChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
-            </div>
+      {activeSubTab === 'reports' && (
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <button onClick={() => { setReportConfig({ ...reportConfig, type: 'EXEC' }); setShowReportModal(true); }} className="bg-white border rounded-2xl p-6 text-left"><FileText className="w-8 h-8 mb-2" /><div className="font-bold">Gerar PDF Executivo</div></button>
+            <button onClick={() => { setReportConfig({ ...reportConfig, type: 'TECH' }); setShowReportModal(true); }} className="bg-white border rounded-2xl p-6 text-left"><Download className="w-8 h-8 mb-2" /><div className="font-bold">Gerar PDF Técnico</div></button>
+          </div>
+          {reportJobStatus && <div className="bg-white border rounded-xl p-4 text-sm">Status último job: <b>{reportJobStatus.status}</b> {reportJobStatus.file_url && <a className="text-emerald-600 ml-2" href={reportJobStatus.file_url}>Baixar PDF</a>}</div>}
+          <div className="bg-white border rounded-2xl p-4">
+            <h3 className="font-bold mb-3">Histórico de relatórios</h3>
+            <div className="space-y-2">{reportHistory.map((h) => <div key={h.id} className="flex justify-between bg-zinc-50 rounded-lg p-3 text-sm"><span>{h.created_at} • {h.type} • {h.status}</span><a href={h.file_url} className="text-emerald-600">Baixar novamente</a></div>)}</div>
+          </div>
+        </div>
+      )}
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {/* Frequent Reasons */}
-              <div className="bg-white p-6 rounded-3xl border border-zinc-200 shadow-sm">
-                <h3 className="text-sm font-bold uppercase tracking-widest text-zinc-400 mb-6">Motivos de Restrição/Veto</h3>
-                <div className="space-y-4">
-                  {summary.frequentReasons.map((item: any, i: number) => (
-                    <div key={i} className="flex items-center justify-between p-4 bg-zinc-50 rounded-2xl">
-                      <span className="text-sm font-bold text-zinc-900">{item.reason}</span>
-                      <span className="px-3 py-1 bg-white rounded-lg text-xs font-bold text-zinc-600 shadow-sm">{item.count} casos</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
+      <AnimatePresence>{showFilters && <motion.div className="fixed inset-0 bg-zinc-900/40 flex justify-end" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}><div className="w-full max-w-sm bg-white p-6 space-y-3"><div className="flex justify-between"><h3 className="font-bold">Filtros</h3><button onClick={() => setShowFilters(false)}><X className="w-4 h-4" /></button></div><input className="border rounded-xl p-2" placeholder="Função" value={filters.role} onChange={(e) => setFilters({ ...filters, role: e.target.value })} /><input className="border rounded-xl p-2" placeholder="Motivo" value={filters.reason} onChange={(e) => setFilters({ ...filters, reason: e.target.value })} /><select className="border rounded-xl p-2" value={filters.result} onChange={(e) => setFilters({ ...filters, result: e.target.value })}><option value="">Todos resultados</option><option value="RECOMMENDED">Recomendado</option><option value="RESTRICTED">Restrição</option><option value="NOT_RECOMMENDED">Não recomendado</option></select><button onClick={() => { setShowFilters(false); loadData(); }} className="w-full bg-emerald-600 text-white rounded-xl py-2">Aplicar</button></div></motion.div>}</AnimatePresence>
 
-              {/* Critical Roles */}
-              <div className="bg-white p-6 rounded-3xl border border-zinc-200 shadow-sm">
-                <h3 className="text-sm font-bold uppercase tracking-widest text-zinc-400 mb-6">Funções Críticas (Vetos)</h3>
-                <div className="space-y-4">
-                  {summary.topCriticalRoles.map((item: any, i: number) => (
-                    <div key={i} className="flex items-center justify-between p-4 bg-rose-50 rounded-2xl border border-rose-100">
-                      <span className="text-sm font-bold text-rose-900">{item.role}</span>
-                      <span className="px-3 py-1 bg-white rounded-lg text-xs font-bold text-rose-600 shadow-sm">{item.count} vetos</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </motion.div>
-        )}
+      <AnimatePresence>{showEvalModal && <motion.div className="fixed inset-0 bg-zinc-900/60 flex items-center justify-center p-4" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}><div className="bg-white w-full max-w-2xl rounded-2xl p-6 space-y-4"><div className="flex justify-between"><h3 className="font-bold text-xl">{editingEvaluation ? 'Editar' : 'Nova'} Avaliação</h3><button onClick={() => setShowEvalModal(false)}><X className="w-4 h-4" /></button></div>{evalStep === 1 && <div className="space-y-3"><input className="w-full border rounded-xl p-2" value={newEval.role_name} onChange={(e) => onRoleChange(e.target.value)} placeholder="Função/Cargo" /><input type="date" className="w-full border rounded-xl p-2" value={newEval.evaluation_date} onChange={(e) => setNewEval({ ...newEval, evaluation_date: e.target.value })} /><button onClick={() => setEvalStep(2)} className="w-full bg-emerald-600 text-white rounded-xl py-2">Ir para Step 2</button></div>}{evalStep === 2 && <div className="space-y-3"><div className="text-xs text-zinc-500">Template selecionado: {activeTemplate?.role_name || 'Sem template publicado'}</div>{(activeTemplate?.fields_json || []).map((f: any) => <div key={f.id} className="space-y-1"><label className="text-sm font-bold">{f.label}</label>{f.type === 'number' && <input type="number" className="w-full border rounded-xl p-2" onChange={(e) => setNewEval({ ...newEval, answers: { ...newEval.answers, [f.id]: Number(e.target.value) } })} />}{f.type === 'checkbox' && <label className="text-sm flex items-center gap-2"><input type="checkbox" onChange={(e) => setNewEval({ ...newEval, answers: { ...newEval.answers, [f.id]: e.target.checked } })} /> Sim</label>}{f.type === 'text' && <input className="w-full border rounded-xl p-2" onChange={(e) => setNewEval({ ...newEval, answers: { ...newEval.answers, [f.id]: e.target.value } })} />}</div>)}<select className="w-full border rounded-xl p-2" value={newEval.result} onChange={(e) => setNewEval({ ...newEval, result: e.target.value })}><option value="RECOMMENDED">Recomendado</option><option value="RESTRICTED">Restrição</option><option value="NOT_RECOMMENDED">Não recomendado</option></select>{(newEval.result === 'RESTRICTED' || newEval.result === 'NOT_RECOMMENDED') && <input className="w-full border rounded-xl p-2" placeholder="Motivos separados por vírgula" onChange={(e) => setNewEval({ ...newEval, reasons: e.target.value.split(',').map((v) => v.trim()).filter(Boolean) })} />}<textarea className="w-full border rounded-xl p-2" placeholder="Observações" onChange={(e) => setNewEval({ ...newEval, notes: e.target.value })} /><div className="grid grid-cols-3 gap-2"><button onClick={saveEvaluation} className="bg-emerald-600 text-white rounded-xl py-2">Salvar</button><button onClick={() => { saveEvaluation(); setShowEvalModal(true); }} className="bg-zinc-100 rounded-xl py-2">Salvar e outro</button><button onClick={() => setShowEvalModal(false)} className="bg-zinc-100 rounded-xl py-2">Rascunho</button></div></div>}</div></motion.div>}</AnimatePresence>
 
-        {activeSubTab === 'list' && (
-          <motion.div 
-            key="list"
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -10 }}
-            className="space-y-6"
-          >
-            {/* Filters & Actions */}
-            <div className="flex flex-wrap items-center justify-between gap-4">
-              <div className="flex items-center gap-3 flex-1 min-w-[300px]">
-                <div className="relative flex-1">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
-                  <input type="text" placeholder="Buscar por função, setor..." className="w-full pl-9 pr-4 py-2.5 bg-white border border-zinc-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20" />
-                </div>
-                <button className="p-2.5 bg-white border border-zinc-200 rounded-xl text-zinc-400 hover:text-zinc-900 transition-colors">
-                  <Filter className="w-5 h-5" />
-                </button>
-              </div>
-              <div className="flex items-center gap-3">
-                <button className="px-4 py-2.5 bg-white border border-zinc-200 rounded-xl text-sm font-bold text-zinc-600 flex items-center gap-2 hover:bg-zinc-50">
-                  <Download className="w-4 h-4" />
-                  Exportar
-                </button>
-                <button 
-                  onClick={() => setShowNewModal(true)}
-                  className="px-4 py-2.5 bg-emerald-600 text-white rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-emerald-700 shadow-sm"
-                >
-                  <Plus className="w-4 h-4" />
-                  Nova Avaliação
-                </button>
-              </div>
-            </div>
+      <AnimatePresence>{selectedEvaluation && <motion.div className="fixed inset-0 bg-zinc-900/40 flex justify-end" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}><div className="w-full max-w-lg bg-white p-6 space-y-3 overflow-auto"><div className="flex justify-between"><h3 className="font-bold">Detalhe da Avaliação</h3><button onClick={() => setSelectedEvaluation(null)}><X className="w-4 h-4" /></button></div><div className="text-sm"><b>{selectedEvaluation.role_name}</b> • {selectedEvaluation.evaluation_date}</div><div className="text-xs text-zinc-500">{selectedEvaluation.unit_name} / {selectedEvaluation.sector_name} • Template v{selectedEvaluation.template_version || '-'}</div><div className="bg-zinc-50 rounded-xl p-3 text-sm">Resultado: {selectedEvaluation.result}</div><div className="bg-zinc-50 rounded-xl p-3 text-sm">Motivos: {(selectedEvaluation.reasons_json || []).join(', ') || '-'}</div><div className="bg-zinc-50 rounded-xl p-3 text-sm">Anexos: {selectedAttachments.length}</div><div className="grid grid-cols-2 gap-2 text-sm"><button onClick={() => { setEditingEvaluation(selectedEvaluation); setNewEval({ ...newEval, ...selectedEvaluation, reasons: selectedEvaluation.reasons_json || [], answers: selectedEvaluation.answers_json || {} }); setShowEvalModal(true); }} className="border rounded-lg py-2">Editar</button><button className="border rounded-lg py-2">Criar Plano de Ação</button><button onClick={async () => { await uploadAdmissionAttachment(selectedEvaluation.id, { file_url: '/uploads/mock.png', file_name: 'mock.png', created_by: user.id }); setSelectedAttachments(await fetchAdmissionAttachments(selectedEvaluation.id)); }} className="border rounded-lg py-2">Anexos</button><button className="border rounded-lg py-2">Baixar PDF</button>{isAdmin && <button onClick={async () => { await deleteAdmissionEvaluation(selectedEvaluation.id); setSelectedEvaluation(null); loadData(); }} className="col-span-2 border rounded-lg py-2 text-rose-600">Excluir</button>}</div></div></motion.div>}</AnimatePresence>
 
-            {/* Table */}
-            <div className="bg-white rounded-3xl border border-zinc-200 shadow-sm overflow-hidden">
-              <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse">
-                  <thead>
-                    <tr className="bg-zinc-50/50 border-b border-zinc-100">
-                      <th className="px-6 py-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Data</th>
-                      <th className="px-6 py-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Função</th>
-                      <th className="px-6 py-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Unidade / Setor</th>
-                      <th className="px-6 py-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Resultado</th>
-                      <th className="px-6 py-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Motivo Principal</th>
-                      <th className="px-6 py-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Ações</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-zinc-100">
-                    {evaluations.map((item) => (
-                      <tr key={item.id} className="hover:bg-zinc-50/50 transition-colors group">
-                        <td className="px-6 py-4">
-                          <div className="text-sm font-bold text-zinc-900">{new Date(item.evaluation_date).toLocaleDateString()}</div>
-                        </td>
-                        <td className="px-6 py-4">
-                          <div className="text-sm font-medium text-zinc-900">{item.role_name}</div>
-                        </td>
-                        <td className="px-6 py-4">
-                          <div className="text-sm text-zinc-500">{item.sector_name}</div>
-                          <div className="text-[10px] text-zinc-400 uppercase font-bold">{item.unit_name}</div>
-                        </td>
-                        <td className="px-6 py-4">
-                          {getResultBadge(item.result)}
-                        </td>
-                        <td className="px-6 py-4">
-                          <div className="text-xs text-zinc-500">{item.reasons_json?.[0] || '-'}</div>
-                        </td>
-                        <td className="px-6 py-4">
-                          <div className="flex items-center gap-2">
-                            <button className="p-2 text-zinc-400 hover:text-zinc-900 transition-colors">
-                              <Eye className="w-4 h-4" />
-                            </button>
-                            {isAdmin && (
-                              <button className="p-2 text-zinc-400 hover:text-rose-600 transition-colors">
-                                <Trash2 className="w-4 h-4" />
-                              </button>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </motion.div>
-        )}
+      <AnimatePresence>{showTemplateModal && <motion.div className="fixed inset-0 bg-zinc-900/60 flex items-center justify-center p-4" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}><div className="bg-white w-full max-w-2xl rounded-2xl p-6 space-y-4"><div className="flex justify-between"><h3 className="font-bold text-xl">{editingTemplate ? 'Editar' : 'Novo'} Template</h3><button onClick={() => setShowTemplateModal(false)}><X className="w-4 h-4" /></button></div><input className="w-full border rounded-xl p-2" value={templateForm.role_name} onChange={(e) => setTemplateForm({ ...templateForm, role_name: e.target.value })} placeholder="Função/Cargo" /><textarea className="w-full border rounded-xl p-2 h-28" value={JSON.stringify(templateForm.fields_json, null, 2)} onChange={(e) => setTemplateForm({ ...templateForm, fields_json: JSON.parse(e.target.value || '[]') })} /><textarea className="w-full border rounded-xl p-2" value={JSON.stringify(templateForm.rules_json)} onChange={(e) => setTemplateForm({ ...templateForm, rules_json: JSON.parse(e.target.value || '{}') })} /><input className="w-full border rounded-xl p-2" value={(templateForm.reasons_json || []).join(', ')} onChange={(e) => setTemplateForm({ ...templateForm, reasons_json: e.target.value.split(',').map((v: string) => v.trim()).filter(Boolean) })} placeholder="Motivos" /><button onClick={saveTemplate} className="w-full bg-emerald-600 text-white rounded-xl py-2">Salvar Template</button></div></motion.div>}</AnimatePresence>
 
-        {activeSubTab === 'templates' && (
-          <motion.div 
-            key="templates"
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -10 }}
-            className="space-y-6"
-          >
-            <div className="flex justify-between items-center">
-              <h2 className="text-xl font-bold text-zinc-900">Templates de Avaliação</h2>
-              <button className="px-4 py-2 bg-zinc-900 text-white rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-zinc-800">
-                <Plus className="w-4 h-4" />
-                Novo Template
-              </button>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {templates.map((tpl) => (
-                <div key={tpl.id} className="bg-white p-6 rounded-3xl border border-zinc-200 shadow-sm hover:border-emerald-500/50 transition-all group">
-                  <div className="flex justify-between items-start mb-4">
-                    <div className="w-12 h-12 bg-zinc-50 rounded-2xl flex items-center justify-center group-hover:bg-emerald-50 transition-colors">
-                      <ShieldCheck className="text-zinc-400 group-hover:text-emerald-600" />
-                    </div>
-                    <div className="flex gap-2">
-                      <button className="p-2 text-zinc-400 hover:text-zinc-900"><Copy size={16} /></button>
-                      <button className="p-2 text-zinc-400 hover:text-zinc-900"><Settings size={16} /></button>
-                    </div>
-                  </div>
-                  <h3 className="font-bold text-zinc-900 mb-1">{tpl.role_name}</h3>
-                  <p className="text-xs text-zinc-500 mb-4">{tpl.fields_json.length} testes configurados</p>
-                  <div className="flex items-center justify-between pt-4 border-t border-zinc-100">
-                    <span className="text-[10px] font-bold text-zinc-400 uppercase">v{tpl.version}</span>
-                    <span className="px-2 py-1 bg-emerald-50 text-emerald-600 rounded-lg text-[10px] font-bold uppercase">Publicado</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </motion.div>
-        )}
-
-        {activeSubTab === 'reports' && (
-          <motion.div 
-            key="reports"
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -10 }}
-            className="grid grid-cols-1 md:grid-cols-2 gap-6"
-          >
-            <div className="bg-white p-8 rounded-3xl border border-zinc-200 shadow-sm space-y-6">
-              <div className="w-16 h-16 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center">
-                <BarChart3 size={32} />
-              </div>
-              <div>
-                <h3 className="text-xl font-bold text-zinc-900">Relatório Executivo</h3>
-                <p className="text-zinc-500 text-sm mt-2">Visão macro com gráficos e indicadores agregados para diretoria.</p>
-              </div>
-              <button className="w-full py-4 bg-zinc-900 text-white rounded-2xl font-bold flex items-center justify-center gap-2 hover:bg-zinc-800 transition-all">
-                <Download size={20} />
-                Gerar PDF Executivo
-              </button>
-            </div>
-
-            <div className="bg-white p-8 rounded-3xl border border-zinc-200 shadow-sm space-y-6">
-              <div className="w-16 h-16 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center">
-                <FileText size={32} />
-              </div>
-              <div>
-                <h3 className="text-xl font-bold text-zinc-900">Relatório Técnico</h3>
-                <p className="text-zinc-500 text-sm mt-2">Detalhamento por função, motivos de veto e scores de testes.</p>
-              </div>
-              <button className="w-full py-4 bg-zinc-900 text-white rounded-2xl font-bold flex items-center justify-center gap-2 hover:bg-zinc-800 transition-all">
-                <Download size={20} />
-                Gerar PDF Técnico
-              </button>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* New Evaluation Modal */}
-      <AnimatePresence>
-        {showNewModal && (
-          <motion.div 
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 bg-zinc-900/90 backdrop-blur-sm flex items-center justify-center p-4"
-          >
-            <motion.div 
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-white w-full max-w-2xl rounded-[40px] shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
-            >
-              <div className="p-8 border-b border-zinc-100 flex items-center justify-between bg-zinc-50/50">
-                <div className="flex items-center gap-4">
-                  <div className="w-12 h-12 bg-emerald-600 text-white rounded-2xl flex items-center justify-center shadow-lg shadow-emerald-200">
-                    <Plus className="w-6 h-6" />
-                  </div>
-                  <div>
-                    <h2 className="text-2xl font-bold text-zinc-900">Nova Avaliação</h2>
-                    <p className="text-zinc-500 text-sm">Registro cinesiofuncional admissional.</p>
-                  </div>
-                </div>
-                <button 
-                  onClick={() => setShowNewModal(false)}
-                  className="p-3 hover:bg-zinc-100 rounded-2xl transition-colors text-zinc-400"
-                >
-                  <X className="w-6 h-6" />
-                </button>
-              </div>
-
-              <div className="flex-1 overflow-y-auto p-8 custom-scrollbar">
-                {/* Steps */}
-                <div className="flex items-center justify-center gap-4 mb-12">
-                  {[1, 2].map((s) => (
-                    <React.Fragment key={s}>
-                      <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm transition-all ${
-                        modalStep === s ? 'bg-emerald-600 text-white scale-110 shadow-lg shadow-emerald-200' : 
-                        modalStep > s ? 'bg-emerald-100 text-emerald-600' : 'bg-zinc-100 text-zinc-400'
-                      }`}>
-                        {modalStep > s ? <CheckCircle2 className="w-5 h-5" /> : s}
-                      </div>
-                      {s < 2 && <div className={`w-12 h-0.5 rounded-full ${modalStep > s ? 'bg-emerald-600' : 'bg-zinc-100'}`} />}
-                    </React.Fragment>
-                  ))}
-                </div>
-
-                {modalStep === 1 && (
-                  <motion.div 
-                    initial={{ opacity: 0, x: 20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    className="space-y-6"
-                  >
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <label className="text-xs font-bold text-zinc-700">Unidade</label>
-                        <select 
-                          value={newEval.unit_id}
-                          onChange={(e) => setNewEval({ ...newEval, unit_id: e.target.value })}
-                          className="w-full p-4 bg-zinc-50 border border-zinc-200 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
-                        >
-                          <option value="">Selecione...</option>
-                          {units.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
-                        </select>
-                      </div>
-                      <div className="space-y-2">
-                        <label className="text-xs font-bold text-zinc-700">Setor</label>
-                        <select 
-                          value={newEval.sector_id}
-                          onChange={(e) => setNewEval({ ...newEval, sector_id: e.target.value })}
-                          className="w-full p-4 bg-zinc-50 border border-zinc-200 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
-                        >
-                          <option value="">Selecione...</option>
-                          <option value="toyota-montagem">Montagem Cross</option>
-                        </select>
-                      </div>
-                    </div>
-
-                    <div className="space-y-2">
-                      <label className="text-xs font-bold text-zinc-700">Função / Cargo</label>
-                      <select 
-                        value={newEval.template_id}
-                        onChange={(e) => {
-                          const tpl = templates.find(t => t.id === e.target.value);
-                          setNewEval({ ...newEval, template_id: e.target.value, role_name: tpl?.role_name || '' });
-                        }}
-                        className="w-full p-4 bg-zinc-50 border border-zinc-200 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
-                      >
-                        <option value="">Selecione a função...</option>
-                        {templates.map(t => <option key={t.id} value={t.id}>{t.role_name}</option>)}
-                      </select>
-                    </div>
-
-                    <div className="space-y-2">
-                      <label className="text-xs font-bold text-zinc-700">Data da Avaliação</label>
-                      <input 
-                        type="date" 
-                        value={newEval.evaluation_date}
-                        onChange={(e) => setNewEval({ ...newEval, evaluation_date: e.target.value })}
-                        className="w-full p-4 bg-zinc-50 border border-zinc-200 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
-                      />
-                    </div>
-
-                    <button 
-                      onClick={() => setModalStep(2)}
-                      disabled={!newEval.unit_id || !newEval.sector_id || !newEval.template_id}
-                      className="w-full py-4 bg-emerald-600 text-white rounded-2xl font-bold text-lg hover:bg-emerald-700 shadow-xl shadow-emerald-100 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                    >
-                      Próximo Passo
-                      <ArrowRight className="w-5 h-5" />
-                    </button>
-                  </motion.div>
-                )}
-
-                {modalStep === 2 && (
-                  <motion.div 
-                    initial={{ opacity: 0, x: 20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    className="space-y-8"
-                  >
-                    <div className="space-y-6">
-                      <div className="p-6 bg-zinc-50 rounded-[32px] border border-zinc-100">
-                        <h4 className="text-xs font-bold text-zinc-400 uppercase tracking-widest mb-4">Testes do Template</h4>
-                        <div className="space-y-4">
-                          {templates.find(t => t.id === newEval.template_id)?.fields_json.map((field: any) => (
-                            <div key={field.name} className="space-y-2">
-                              <label className="text-sm font-bold text-zinc-700">{field.label}</label>
-                              {field.type === 'number' ? (
-                                <input 
-                                  type="number" 
-                                  placeholder="Score / Valor"
-                                  className="w-full p-3 bg-white border border-zinc-200 rounded-xl text-sm"
-                                  onChange={(e) => setNewEval({ ...newEval, scores: { ...newEval.scores, [field.name]: e.target.value }})}
-                                />
-                              ) : (
-                                <div className="flex gap-2">
-                                  <button 
-                                    onClick={() => setNewEval({ ...newEval, scores: { ...newEval.scores, [field.name]: true }})}
-                                    className={`flex-1 py-2 rounded-xl border-2 font-bold text-xs ${newEval.scores[field.name] === true ? 'border-emerald-600 bg-emerald-50 text-emerald-700' : 'border-zinc-100 text-zinc-400'}`}
-                                  >
-                                    Sim
-                                  </button>
-                                  <button 
-                                    onClick={() => setNewEval({ ...newEval, scores: { ...newEval.scores, [field.name]: false }})}
-                                    className={`flex-1 py-2 rounded-xl border-2 font-bold text-xs ${newEval.scores[field.name] === false ? 'border-rose-600 bg-rose-50 text-rose-700' : 'border-zinc-100 text-zinc-400'}`}
-                                  >
-                                    Não
-                                  </button>
-                                </div>
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-
-                      <div className="space-y-4">
-                        <label className="text-xs font-bold text-zinc-700">Resultado Final</label>
-                        <div className="grid grid-cols-3 gap-3">
-                          {[
-                            { id: 'RECOMMENDED', label: 'Recomendado', color: 'emerald' },
-                            { id: 'RESTRICTED', label: 'Restrição', color: 'amber' },
-                            { id: 'NOT_RECOMMENDED', label: 'Não Recomendado', color: 'rose' }
-                          ].map((r) => (
-                            <button 
-                              key={r.id}
-                              onClick={() => setNewEval({ ...newEval, result: r.id as any })}
-                              className={`py-4 rounded-2xl border-2 font-bold text-[10px] uppercase transition-all ${
-                                newEval.result === r.id ? `border-${r.color}-600 bg-${r.color}-50 text-${r.color}-700` : 'border-zinc-100 text-zinc-400'
-                              }`}
-                            >
-                              {r.label}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-
-                      {(newEval.result === 'RESTRICTED' || newEval.result === 'NOT_RECOMMENDED') && (
-                        <div className="space-y-2">
-                          <label className="text-xs font-bold text-zinc-700">Motivos (Selecione pelo menos um)</label>
-                          <div className="flex flex-wrap gap-2">
-                            {['Dor lombar', 'Lesão ombro', 'Limitação mobilidade', 'Histórico cirurgia'].map((reason) => (
-                              <button 
-                                key={reason}
-                                onClick={() => {
-                                  const exists = newEval.reasons.includes(reason);
-                                  setNewEval({ 
-                                    ...newEval, 
-                                    reasons: exists ? newEval.reasons.filter(r => r !== reason) : [...newEval.reasons, reason] 
-                                  });
-                                }}
-                                className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all ${
-                                  newEval.reasons.includes(reason) ? 'bg-zinc-900 text-white' : 'bg-zinc-100 text-zinc-500 hover:bg-zinc-200'
-                                }`}
-                              >
-                                {reason}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      <div className="space-y-2">
-                        <label className="text-xs font-bold text-zinc-700">Anexo (Laudo/Foto)</label>
-                        <div className="p-8 border-2 border-dashed border-zinc-200 rounded-3xl flex flex-col items-center justify-center gap-3 text-zinc-400 hover:bg-emerald-50 hover:border-emerald-200 hover:text-emerald-600 transition-all cursor-pointer group">
-                          <Camera className="w-8 h-8 group-hover:scale-110 transition-transform" />
-                          <span className="text-xs font-bold uppercase tracking-wider">Clique para anexar</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="flex gap-4">
-                      <button 
-                        onClick={() => setModalStep(1)}
-                        className="flex-1 py-4 bg-zinc-100 text-zinc-600 rounded-2xl font-bold hover:bg-zinc-200 transition-all flex items-center justify-center gap-2"
-                      >
-                        <ArrowLeft className="w-5 h-5" />
-                        Voltar
-                      </button>
-                      <button 
-                        onClick={handleSave}
-                        className="flex-[2] py-4 bg-emerald-600 text-white rounded-2xl font-bold text-lg hover:bg-emerald-700 shadow-xl shadow-emerald-100 transition-all flex items-center justify-center gap-2"
-                      >
-                        <Save className="w-5 h-5" />
-                        Salvar Avaliação
-                      </button>
-                    </div>
-                  </motion.div>
-                )}
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      <AnimatePresence>{showReportModal && <motion.div className="fixed inset-0 bg-zinc-900/60 flex items-center justify-center p-4" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}><div className="bg-white w-full max-w-md rounded-2xl p-6 space-y-3"><div className="flex justify-between"><h3 className="font-bold">Configurar Relatório</h3><button onClick={() => setShowReportModal(false)}><X className="w-4 h-4" /></button></div><input type="date" className="w-full border rounded-xl p-2" value={reportConfig.from} onChange={(e) => setReportConfig({ ...reportConfig, from: e.target.value })} /><input type="date" className="w-full border rounded-xl p-2" value={reportConfig.to} onChange={(e) => setReportConfig({ ...reportConfig, to: e.target.value })} /><label className="text-sm flex items-center gap-2"><input type="checkbox" checked={reportConfig.includeCharts} onChange={(e) => setReportConfig({ ...reportConfig, includeCharts: e.target.checked })} /> incluir gráficos</label><label className="text-sm flex items-center gap-2"><input type="checkbox" checked={reportConfig.hideSensitive} onChange={(e) => setReportConfig({ ...reportConfig, hideSensitive: e.target.checked })} /> ocultar dados sensíveis</label><button onClick={generateReport} className="w-full bg-zinc-900 text-white rounded-xl py-2">Gerar</button></div></motion.div>}</AnimatePresence>
     </div>
   );
 };

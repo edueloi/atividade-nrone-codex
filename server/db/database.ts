@@ -124,6 +124,18 @@ export function initDb() {
       FOREIGN KEY(tenant_id) REFERENCES tenants(id)
     );
 
+
+    CREATE TABLE IF NOT EXISTS schedule_exceptions (
+      id TEXT PRIMARY KEY,
+      schedule_id TEXT NOT NULL,
+      date TEXT NOT NULL,
+      status TEXT DEFAULT 'canceled',
+      reason TEXT,
+      created_by TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(schedule_id) REFERENCES schedules(id)
+    );
+
     -- Fisioterapia (Cinesioterapia)
     CREATE TABLE IF NOT EXISTS physio_records (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -286,9 +298,10 @@ export function initDb() {
       tenant_id TEXT NOT NULL,
       role_name TEXT NOT NULL,
       version INTEGER DEFAULT 1,
-      is_published BOOLEAN DEFAULT 1,
+      status TEXT DEFAULT 'DRAFT', -- DRAFT/PUBLISHED/DISABLED
       fields_json TEXT NOT NULL, -- JSON array of field definitions
       rules_json TEXT, -- JSON object for scoring rules
+      reasons_json TEXT, -- JSON array of standard reasons
       created_by TEXT NOT NULL,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY(tenant_id) REFERENCES tenants(id)
@@ -301,20 +314,55 @@ export function initDb() {
       sector_id TEXT NOT NULL,
       role_name TEXT NOT NULL,
       template_id TEXT,
+      template_version INTEGER,
       evaluation_date TEXT NOT NULL,
       result TEXT CHECK(result IN ('RECOMMENDED', 'RESTRICTED', 'NOT_RECOMMENDED')) NOT NULL,
       reasons_json TEXT, -- JSON array of reasons
-      scores_json TEXT, -- JSON object of test results
+      answers_json TEXT, -- JSON object of template answers
       notes TEXT,
       status TEXT DEFAULT 'COMPLETED',
       created_by TEXT NOT NULL,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY(tenant_id) REFERENCES tenants(id),
       FOREIGN KEY(unit_id) REFERENCES units(id),
       FOREIGN KEY(sector_id) REFERENCES sectors(id),
       FOREIGN KEY(template_id) REFERENCES admission_templates(id)
     );
+
+    CREATE TABLE IF NOT EXISTS admission_attachments (
+      id TEXT PRIMARY KEY,
+      evaluation_id TEXT NOT NULL,
+      file_url TEXT NOT NULL,
+      file_name TEXT NOT NULL,
+      created_by TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(evaluation_id) REFERENCES admission_evaluations(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS report_jobs (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      type TEXT NOT NULL,
+      params_json TEXT,
+      status TEXT DEFAULT 'RUNNING',
+      file_url TEXT,
+      created_by TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(tenant_id) REFERENCES tenants(id)
+    );
   `);
+
+
+  const safeExec = (sql: string) => {
+    try { db.exec(sql); } catch (_error) { /* ignore migrations already applied */ }
+  };
+
+  safeExec("ALTER TABLE admission_templates ADD COLUMN status TEXT DEFAULT 'DRAFT';");
+  safeExec("ALTER TABLE admission_templates ADD COLUMN reasons_json TEXT;");
+  safeExec("ALTER TABLE admission_evaluations ADD COLUMN template_version INTEGER;");
+  safeExec("ALTER TABLE admission_evaluations ADD COLUMN answers_json TEXT;");
+  safeExec("ALTER TABLE admission_evaluations ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP;");
 
   // Seed initial data if empty
   const tenantCount = db.prepare("SELECT count(*) as count FROM tenants").get() as { count: number };
@@ -376,23 +424,23 @@ export function initDb() {
     // Seed Admissional
     const templateId = 'tpl-1';
     db.prepare(`
-      INSERT INTO admission_templates (id, tenant_id, role_name, fields_json, created_by)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(templateId, toyotaId, 'Operador de Empilhadeira', JSON.stringify([
+      INSERT INTO admission_templates (id, tenant_id, role_name, version, status, fields_json, reasons_json, created_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(templateId, toyotaId, 'Operador de Empilhadeira', 1, 'PUBLISHED', JSON.stringify([
       { name: 'flexibility', label: 'Flexibilidade', type: 'number' },
       { name: 'strength', label: 'Força', type: 'number' },
       { name: 'pain', label: 'Dor preexistente', type: 'boolean' }
-    ]), 'admin-1');
+    ]), JSON.stringify(['Dor lombar', 'Lesão ombro', 'Limitação mobilidade']), 'admin-1');
 
     db.prepare(`
-      INSERT INTO admission_evaluations (id, tenant_id, unit_id, sector_id, role_name, template_id, evaluation_date, result, reasons_json, created_by)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run('eval-1', toyotaId, toyotaUnit, toyotaSector, 'Operador de Empilhadeira', templateId, today, 'RECOMMENDED', '[]', 'admin-1');
+      INSERT INTO admission_evaluations (id, tenant_id, unit_id, sector_id, role_name, template_id, template_version, evaluation_date, result, reasons_json, answers_json, created_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run('eval-1', toyotaId, toyotaUnit, toyotaSector, 'Operador de Empilhadeira', templateId, 1, today, 'RECOMMENDED', '[]', JSON.stringify({ flexibility: 8, strength: 7, pain: false }), 'admin-1');
 
     db.prepare(`
-      INSERT INTO admission_evaluations (id, tenant_id, unit_id, sector_id, role_name, template_id, evaluation_date, result, reasons_json, created_by)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run('eval-2', toyotaId, toyotaUnit, toyotaSector, 'Operador de Empilhadeira', templateId, today, 'NOT_RECOMMENDED', JSON.stringify(['Dor lombar']), 'admin-1');
+      INSERT INTO admission_evaluations (id, tenant_id, unit_id, sector_id, role_name, template_id, template_version, evaluation_date, result, reasons_json, answers_json, created_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run('eval-2', toyotaId, toyotaUnit, toyotaSector, 'Operador de Empilhadeira', templateId, 1, today, 'NOT_RECOMMENDED', JSON.stringify(['Dor lombar']), JSON.stringify({ flexibility: 3, strength: 4, pain: true }), 'admin-1');
   }
 }
 

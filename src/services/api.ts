@@ -48,7 +48,16 @@ export async function startClassSession(sessionId: string) {
   const response = await fetch('/api/classes/start', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ sessionId }),
+    body: JSON.stringify({ scheduleId: sessionId }),
+  });
+  return response.json();
+}
+
+export async function launchAdhocClass(data: any) {
+  const response = await fetch('/api/classes/start', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
   });
   return response.json();
 }
@@ -68,6 +77,55 @@ export async function finishClassSession(classId: string, notes: string) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ notes }),
   });
+  return response.json();
+}
+
+export async function cancelClassSession(classId: string, reason: string, userId: string) {
+  const response = await fetch(`/api/classes/${classId}/cancel`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ reason, userId }),
+  });
+  return response.json();
+}
+
+export async function deleteClassSession(classId: string, userId: string) {
+  const response = await fetch(`/api/classes/${classId}?userId=${encodeURIComponent(userId)}`, {
+    method: 'DELETE',
+  });
+  return response.json();
+}
+
+export async function copySchedulesWeek(data: any) {
+  const response = await fetch('/api/schedules/copy-week', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  return response.json();
+}
+
+export async function createScheduleException(scheduleId: string, data: any) {
+  const response = await fetch(`/api/schedules/${scheduleId}/exceptions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  return response.json();
+}
+
+export async function fetchAttendanceBySector(tenantId: string, month: string) {
+  const response = await fetch(`/api/reports/attendance/by-sector?tenantId=${tenantId}&month=${month}`);
+  return response.json();
+}
+
+export async function fetchAttendanceTimeline(tenantId: string, from: string, to: string) {
+  const response = await fetch(`/api/reports/attendance/timeline?tenantId=${tenantId}&from=${from}&to=${to}`);
+  return response.json();
+}
+
+export async function fetchBelowTarget(tenantId: string, month: string, target = 80) {
+  const response = await fetch(`/api/reports/attendance/below-target?tenantId=${tenantId}&month=${month}&target=${target}`);
   return response.json();
 }
 
@@ -244,6 +302,92 @@ export async function createAdmissionEvaluation(data: any) {
   return response.json();
 }
 
+
+export async function fetchAdmissionEvaluationById(id: string) {
+  const response = await fetch(`/api/admission/evaluations/${id}`);
+  return response.json();
+}
+
+export async function updateAdmissionEvaluation(id: string, data: any) {
+  const response = await fetch(`/api/admission/evaluations/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  return response.json();
+}
+
+export async function deleteAdmissionEvaluation(id: string) {
+  const response = await fetch(`/api/admission/evaluations/${id}`, { method: 'DELETE' });
+  return response.json();
+}
+
+export async function uploadAdmissionAttachment(id: string, data: any) {
+  const response = await fetch(`/api/admission/evaluations/${id}/attachments`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  return response.json();
+}
+
+export async function fetchAdmissionAttachments(id: string) {
+  const response = await fetch(`/api/admission/evaluations/${id}/attachments`);
+  return response.json();
+}
+
+export async function fetchAdmissionTemplateById(id: string) {
+  const response = await fetch(`/api/admission/templates/${id}`);
+  return response.json();
+}
+
+export async function updateAdmissionTemplate(id: string, data: any) {
+  const response = await fetch(`/api/admission/templates/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  return response.json();
+}
+
+export async function publishAdmissionTemplate(id: string) {
+  const response = await fetch(`/api/admission/templates/${id}/publish`, { method: 'POST' });
+  return response.json();
+}
+
+export async function duplicateAdmissionTemplate(id: string) {
+  const response = await fetch(`/api/admission/templates/${id}/duplicate`, { method: 'POST' });
+  return response.json();
+}
+
+export async function disableAdmissionTemplate(id: string) {
+  const response = await fetch(`/api/admission/templates/${id}/disable`, { method: 'PATCH' });
+  return response.json();
+}
+
+export async function fetchPublishedAdmissionTemplate(tenantId: string, role: string) {
+  const response = await fetch(`/api/admission/templates/${encodeURIComponent(role)}/published?tenantId=${tenantId}`);
+  return response.json();
+}
+
+export async function generateAdmissionReport(data: any) {
+  const response = await fetch('/api/reports/admission/pdf', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  return response.json();
+}
+
+export async function fetchAdmissionReportJob(jobId: string) {
+  const response = await fetch(`/api/reports/admission/jobs/${jobId}`);
+  return response.json();
+}
+
+export async function fetchAdmissionReportHistory(tenantId: string) {
+  const response = await fetch(`/api/reports/admission/history?tenantId=${tenantId}`);
+  return response.json();
+}
 export async function fetchAdmissionSummary(tenantId: string) {
   const response = await fetch(`/api/reports/admission/summary?tenantId=${tenantId}`);
   return response.json();
